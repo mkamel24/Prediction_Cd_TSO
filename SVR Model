@@ -1,0 +1,159 @@
+import pandas as pd
+import numpy as np
+import openpyxl
+import shap
+import matplotlib.pyplot as plt
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from skopt import BayesSearchCV
+from skopt.space import Real, Integer
+from sklearn.inspection import permutation_importance
+
+# Load datasets
+train_df = pd.read_excel("C:/....../....../...../.....")
+test_df = pd.read_excel("C:/....../....../...../.....")
+
+# Define a function to compute performance metrics
+def compute_metrics(y_true, y_pred):
+    return {
+        'R2': r2_score(y_true, y_pred),
+        'RMSE': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'MAE': mean_absolute_error(y_true, y_pred),
+        'MAPE': np.mean(np.abs((y_true - y_pred) / y_true)) * 100,
+        'MBE': np.mean(y_pred - y_true),
+    }
+
+# Define initial hyperparameters for the SVR model
+initial_params = {
+    'svr__C': 1.0,  # Default C value for SVR
+    'svr__gamma': 'scale',  # Default gamma value for SVR ('scale' means 1 / (n_features * X.var()) as the kernel coefficient)
+    'svr__epsilon': 0.1,  # Default epsilon value for SVR
+}
+
+# Create an instance of the SVR model
+initial_model = SVR(C=initial_params['svr__C'], gamma=initial_params['svr__gamma'], epsilon=initial_params['svr__epsilon'])
+
+# Fit and evaluate the initial model
+initial_model.fit(X_train, y_train)
+initial_predictions_train = initial_model.predict(X_train)
+initial_predictions_test = initial_model.predict(X_test)
+initial_train_metrics = compute_metrics(y_train, initial_predictions_train)
+initial_test_metrics = compute_metrics(y_test, initial_predictions_test)
+
+# Bayesian optimization setup for the RBF kernel
+search_spaces = {
+    'C': Real(1e-3, 1e+1, prior='log-uniform'),
+    'gamma': Real(1e-2, 2e+1, prior='log-uniform'),
+    'epsilon': Real(1e-2, 1e+1, prior='log-uniform')
+}
+
+opt = BayesSearchCV(initial_model, search_spaces, n_iter=100, cv=5, scoring='neg_mean_squared_error', n_jobs=-1, random_state=42)
+opt.fit(X_train, y_train)
+
+# Best model after optimization
+best_model = opt.best_estimator_
+
+# Predictions before tuning
+initial_predictions_train = initial_model.predict(X_train)
+initial_predictions_test = initial_model.predict(X_test)
+
+# Predictions after tuning
+predictions_train = best_model.predict(X_train)
+predictions_test = best_model.predict(X_test)
+
+# Compute metrics for tuned model
+train_metrics = compute_metrics(y_train, predictions_train)
+test_metrics = compute_metrics(y_test, predictions_test)
+
+# Calculate feature importances using permutation importance
+perm_importance = permutation_importance(best_model, X_train, y_train, n_repeats=10, random_state=42)
+feature_importances = pd.DataFrame({'Feature': X_train.columns, 'Importance': perm_importance.importances_mean})
+
+# Calculate the total importance to use for converting individual importances to percentages
+total_importance = feature_importances['Importance'].sum()
+
+# Convert each feature's importance to a percentage of the total
+feature_importances['Importance (%)'] = (feature_importances['Importance'] / total_importance) * 100
+
+# Feature importances
+    feature_importances.to_excel(writer, sheet_name='Feature Importances')
+
+# Initial and tuned hyperparameters
+    hyperparameters_df = pd.DataFrame({
+        'Parameter': list(initial_params.keys()),
+        'Initial Value': list(initial_params.values()),
+        'Tuned Value': [best_model.get_params()[param] for param in search_spaces.keys()]
+    })
+    hyperparameters_df.to_excel(writer, sheet_name='Hyperparameters', index=False)
+
+ List of input combinations for evaluation
+    input_combinations = [
+        ['X1'],
+        ['X1', 'X2'],
+        ['X1', 'X2', 'X3'],
+        ['X1', 'X2', 'X3', 'X4'],
+        ['X1', 'X2', 'X3', 'X4', 'X5'],
+        # Add more combinations as needed
+    ]
+
+    # Dictionary to store evaluation results for each input combination
+    evaluation_results = {}
+
+    # Evaluate performance for each input combination
+    for input_features in input_combinations:
+        # Subset features
+        X_train_subset = X_train[input_features]
+        X_test_subset = X_test[input_features]
+
+        # Re-initialize the model with parameters from the best model
+        base_model = SVR(C=best_model.get_params()['C'], gamma=best_model.get_params()['gamma'], epsilon=best_model.get_params()['epsilon'])
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('svr', base_model)
+        ])
+
+        # Fit the pipeline on the subset of features
+        pipeline.fit(X_train_subset, y_train)
+
+        # Predictions on training and testing data
+        predictions_train_subset = pipeline.predict(X_train_subset)
+        predictions_test_subset = pipeline.predict(X_test_subset)
+
+        # Compute metrics for the subset
+        metrics_train_subset = compute_metrics(y_train, predictions_train_subset)
+        metrics_test_subset = compute_metrics(y_test, predictions_test_subset)
+
+        # Store results
+        evaluation_results[str(input_features)] = {
+            'Metrics Train': metrics_train_subset,
+            'Metrics Test': metrics_test_subset,
+        }
+
+    # Create a DataFrame for R2 and RMSE values
+    performance_metrics_df = pd.DataFrame({
+        'Input Combination': [str(combo) for combo in input_combinations],
+        'R2 Train': [evaluation_results[str(combo)]['Metrics Train']['R2'] for combo in input_combinations],
+        'RMSE Train': [evaluation_results[str(combo)]['Metrics Train']['RMSE'] for combo in input_combinations],
+        'R2 Test': [evaluation_results[str(combo)]['Metrics Test']['R2'] for combo in input_combinations],
+        'RMSE Test': [evaluation_results[str(combo)]['Metrics Test']['RMSE'] for combo in input_combinations],
+    })
+
+# Define a surrogate callable function for SVR predictions
+def surrogate_model(x):
+    return best_model.predict(x)
+
+# Initialize the SHAP Explainer with the surrogate model and background summary
+explainer = shap.Explainer(surrogate_model, background_summary)
+
+# Directly call the explainer on your data to get SHAP values
+shap_values = explainer(X_train)
+
+# Summary Plot - for each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, feature_names=X_train.columns)
+
+# Bar Plot - showing the average impact of each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, plot_type="bar")
