@@ -1,0 +1,96 @@
+import tkinter as tk
+import numpy as np
+import joblib
+import os
+from xgboost import XGBRegressor
+from tkinter import messagebox
+
+# Load the XGBoost model
+model_path = 'C:/....../....../...../......joblib'
+if os.path.exists(model_path):
+    model = joblib.load(model_path)
+else:
+    messagebox.showerror("Error", "Model file not found. Please ensure the model_path is correct.")
+    exit()
+
+# Create the Tkinter window
+root = tk.Tk()
+root.title("Prediction of TSO's discharge coefficient")
+
+# Create a canvas for the GUI
+canvas = tk.Canvas(root, width=750, height=600, background='#FFFFFF')
+canvas.pack()
+
+# Adding labels to the root window
+label_title = tk.Label(root, text='Prediction of disharge coefficient of Triangular Side Orifice (TSO)', font=('Georgia', 16, 'bold','underline'), fg='#FF0000', bg='#FFFFFF')
+canvas.create_window(20, 20, anchor="w", window=label_title)
+
+label_inputdefinetitle = tk.Label(root, text='- Definition of Parameters', font=('Georgia', 12, 'bold'), fg='#000000', bg='#FFFFFF')
+canvas.create_window(20, 70, anchor="w", window=label_inputdefinetitle)
+
+label_inputdefine = tk.Label(root, text='      y1: Upstream flow depth ‖ L: Orifice base length of orifice ‖ H: Orifice height', font=('Georgia', 12), fg='#0000FF', bg='#FFFFFF')
+canvas.create_window(20, 100, anchor="w", window=label_inputdefine)
+
+label_inputdefine2 = tk.Label(root, text='      B: Main channel width ‖ Fr: Upstream Froude number of the main channel', font=('Georgia', 12), fg='#0000FF', bg='#FFFFFF')
+canvas.create_window(20, 140, anchor="w", window=label_inputdefine4)
+
+label_inputdefine3 = tk.Label(root, text='      Cd: Coefficient of discharge of triangular side orifice', font=('Georgia', 12), fg='#0000FF', bg='#FFFFFF')
+canvas.create_window(20, 180, anchor="w", window=label_inputdefine3)
+
+label_input = tk.Label(root, text='- Input Parameters', font=('Georgia', 12, 'bold'), fg='#000000', bg='#FFFFFF')
+canvas.create_window(20, 220, anchor="w", window=label_input)
+
+label_developer = tk.Label(root, text='Developed by: Eng. Mohamed K.Elshaarawy & Eng. Abdelrahman K.Hamed', font=('Amasis MT Pro Medium', 12, 'bold'), bg='#e9ecef')
+canvas.create_window(20, 520, anchor="w", window=label_developer)
+
+label_institution = tk.Label(root, text='Civil Engineering Dept., Faculty of Engineering, Horus University-Egypt, New Damietta, Egypt', font=('Amasis MT Pro Medium', 12, 'italic'), fg='#0000FF',bg= '#FFFFFF')
+canvas.create_window(20, 550, anchor="w", window=label_institution)
+
+# Define input fields
+entry_fields = ['W/H = W*', 'B/L = L*', 'B/H = H*', 'y1/h = Y*', 'Fr (subcritical flow)']
+entries = {}
+for i, field in enumerate(entry_fields, start=1):
+    label = tk.Label(root, text=f'{field}: ', font=('Georgia', 12), fg='#0000FF', bg='#FFFFFF')
+    canvas.create_window(20, 240 + i*30, anchor="w", window=label)
+    entry = tk.Entry(root)
+    canvas.create_window(400, 240 + i*30, window=entry)
+    entries[field] = entry
+
+label_output = tk.Label(root, text='- Output', font=('Amasis MT Pro Medium', 16, 'bold'), fg='#000000', bg='#FFFFFF')
+canvas.create_window(20, 450, anchor="w", window=label_output)
+
+label_result = tk.Label(root, text=' Cd: Coefficient of discharge of triangular side orifice', font=('Amasis MT Pro Medium', 12, 'bold','italic'), fg='#FF0000', bg='#FFFFFF')
+canvas.create_window(20, 480, anchor="w", window=label_result)
+
+# Predict button command function
+def predict():
+    # Collect input data
+    input_values = []
+    for field in entry_fields:
+        try:
+            value = float(entries[field].get())
+            if value <= 0:
+                raise ValueError("Value must be positive.")
+            input_values.append(value)
+        except ValueError:
+            messagebox.showerror("Error", f"Invalid input for {field}. Please enter a positive numeric value.")
+            return
+
+    # Predict using the loaded model
+    input_data = np.array([input_values])
+    print("Input Data Shape:", input_data.shape)  # Debugging
+    try:
+        prediction = model.predict(input_data)
+        print("Prediction:", prediction)  # Debugging
+        # Display the prediction
+        label_result.config(text=f'Prediction: {prediction[0]:.4f}')
+    except Exception as e:
+        print("Prediction Error:", e)  # Debugging
+        messagebox.showerror("Error", "An error occurred during prediction.")
+
+# Predict button
+predict_button = tk.Button(root, text='Calculate', font=('Amasis MT Pro Medium', 12, 'bold'), command=predict, fg='#FFFFFF',bg='green')
+canvas.create_window(500, 480, window=predict_button)
+
+# Run the Tkinter event loop
+root.mainloop()
