@@ -1,0 +1,154 @@
+import pandas as pd
+import numpy as np
+import shap
+import matplotlib.pyplot as plt
+import joblib
+import os
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from skopt import BayesSearchCV
+from skopt.space import Real, Integer
+from sklearn.tree import plot_tree
+from scipy.stats import linregress
+
+# Load datasets
+train_df = pd.read_excel("C:/....../....../...../.....")
+test_df = pd.read_excel("C:/....../....../...../.....")
+
+# Splitting data into features and target
+X_train = train_df.drop(columns='Y')
+y_train = train_df['Y']
+X_test = test_df.drop(columns='Y')
+y_test = test_df['Y']
+
+# Define a function to compute performance metrics
+def compute_metrics(y_true, y_pred):
+    return {
+        'R2': r2_score(y_true, y_pred),
+        'RMSE': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'MAE': mean_absolute_error(y_true, y_pred),
+        'MAPE': np.mean(np.abs((y_true - y_pred) / y_true)) * 100,
+        'MBE': np.mean(y_pred - y_true),
+    }
+
+# Define initial hyperparameters for Random Forest
+initial_params = {
+    'n_estimators': 10,
+    'max_depth': 3,
+    'min_samples_split': 2,
+    'min_samples_leaf': 1,
+}
+
+# Define Random Forest model with initial hyperparameters
+initial_rf_model = RandomForestRegressor(random_state=42, **initial_params)
+
+# Train the initial model
+initial_rf_model.fit(X_train, y_train)
+
+# Predictions and metrics for initial model on training and test data
+initial_predictions_train = initial_rf_model.predict(X_train)
+initial_predictions_test = initial_rf_model.predict(X_test)
+
+# Predictions and metrics for initial model on test data
+initial_train_metrics = compute_metrics(y_train, initial_predictions_train)
+initial_test_metrics = compute_metrics(y_test, initial_predictions_test)
+
+# Bayesian optimization setup for Random Forest
+search_spaces = {
+    'n_estimators': Integer(10, 600),
+    'max_depth': Integer(3, 30),
+    'min_samples_split': Integer(2, 20),
+    'min_samples_leaf': Integer(1, 20),
+}
+
+opt = BayesSearchCV(initial_rf_model, search_spaces, n_iter=100, cv=5, scoring='neg_mean_squared_error', n_jobs=-1, random_state=42)
+opt.fit(X_train, y_train)
+
+# Best model after optimization
+best_model = opt.best_estimator_
+
+# Predictions and metrics for tuned model on training and test data
+predictions_train = best_model.predict(X_train)
+predictions_test = best_model.predict(X_test)
+train_metrics = compute_metrics(y_train, predictions_train)
+test_metrics = compute_metrics(y_test, predictions_test)
+
+# Create a DataFrame to compare initial and tuned model performance for training and testing
+    performance_comparison_df = pd.DataFrame({
+        'Metric': ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE'],
+        'Initial Model Training': [initial_train_metrics[metric] for metric in ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE']],
+        'Tuned Model Training': [train_metrics[metric] for metric in ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE']],
+        'Initial Model Testing': [initial_test_metrics[metric] for metric in ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE']],
+        'Tuned Model Testing': [test_metrics[metric] for metric in ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE']],
+    })
+    performance_comparison_df.to_excel(writer, sheet_name='Performance Comparison')
+
+# Create a DataFrame for initial and tuned hyperparameters
+    hyperparameters_df = pd.DataFrame({
+        'Parameter': list(initial_params.keys()),
+        'Initial Value': list(initial_params.values()),
+        'Tuned Value': [best_model.get_params()[param] for param in list(initial_params.keys())],
+    })
+    hyperparameters_df.to_excel(writer, sheet_name='Hyperparameters')
+
+# SHAP values for feature importance
+explainer = shap.Explainer(best_model)
+shap_values = explainer.shap_values(X_train)
+
+# Summary Plot - for each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, feature_names=X_train.columns)
+plt.close()
+
+# Bar Plot - showing the average impact of each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, plot_type="bar")
+plt.close()
+
+# List of input combinations for evaluation
+input_combinations = [
+    ['X1'],
+    ['X1', 'X2'],
+    ['X1', 'X2', 'X3'],
+    ['X1', 'X2', 'X3', 'X4'],
+    ['X1', 'X2', 'X3', 'X4', 'X5'],
+    # Add more combinations as needed
+]
+
+# Dictionary to store evaluation results for each input combination
+evaluation_results = {}
+
+# Evaluate performance for each input combination
+for input_features in input_combinations:
+# Subset features
+    X_train_subset = X_train[input_features]
+    X_test_subset = X_test[input_features]
+    
+# Train the model on the subset of features
+    best_model.fit(X_train_subset, y_train)
+                        
+# Predictions on training and testing data
+    predictions_train_subset = best_model.predict(X_train_subset)
+    predictions_test_subset = best_model.predict(X_test_subset)
+    
+# Compute metrics for the subset
+    metrics_train_subset = compute_metrics(y_train, predictions_train_subset)
+    metrics_test_subset = compute_metrics(y_test, predictions_test_subset)
+    
+# Compute additional metrics for the subset
+    additional_metrics_train_subset = compute_additional_metrics(y_train, predictions_train_subset)
+    additional_metrics_test_subset = compute_additional_metrics(y_test, predictions_test_subset)
+
+# Store results
+    evaluation_results[str(input_features)] = {
+        'Metrics Train': metrics_train_subset,
+        'Metrics Test': metrics_test_subset,
+        'Additional Metrics Train': additional_metrics_train_subset,
+        'Additional Metrics Test': additional_metrics_test_subset
+    }
+
+# Plot comparison using bar charts for R2 and RMSE
+r2_values_train = [evaluation_results[str(combo)]['Metrics Train']['R2'] for combo in input_combinations]
+rmse_values_train = [evaluation_results[str(combo)]['Metrics Train']['RMSE'] for combo in input_combinations]
+r2_values_test = [evaluation_results[str(combo)]['Metrics Test']['R2'] for combo in input_combinations]
+rmse_values_test = [evaluation_results[str(combo)]['Metrics Test']['RMSE'] for combo in input_combinations]
