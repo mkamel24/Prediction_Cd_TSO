@@ -1,0 +1,151 @@
+import pandas as pd
+import numpy as np
+import shap
+import matplotlib.pyplot as plt
+import openpyxl
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from skopt import BayesSearchCV
+from skopt.space import Real, Integer, Categorical
+from sklearn.tree import plot_tree
+
+# Load datasets
+train_df = pd.read_excel("C:/....../....../...../.....")
+test_df = pd.read_excel("C:/....../....../...../.....")
+
+# Splitting data into features and target
+X_train = train_df.drop(columns='Y')  
+y_train = train_df['Y']  
+X_test = test_df.drop(columns='Y')
+y_test = test_df['Y']
+
+# Define a function to compute performance metrics
+def compute_metrics(y_true, y_pred):
+    return {
+        'R2': r2_score(y_true, y_pred),
+        'RMSE': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'MAE': mean_absolute_error(y_true, y_pred),
+        'MAPE': np.mean(np.abs((y_true - y_pred) / y_true)) * 100,
+        'MBE': np.mean(y_pred - y_true),
+    }
+
+# Define initial hyperparameters
+initial_params = {
+    'n_estimators': 10,  # Updated from 10 to a higher starting point
+    'learning_rate': 0.01,  # Slightly higher starting learning rate
+    'loss': 'linear',  # Default loss for regression
+    }    
+
+# Initial model (before hyperparameter tuning) using initial_params
+initial_model = AdaBoostRegressor(n_estimators=initial_params['n_estimators'],
+                                  learning_rate=initial_params['learning_rate'],
+                                  loss=initial_params['loss'],
+                                  random_state=42)
+
+# Fit and evaluate the initial model
+initial_model.fit(X_train, y_train)
+initial_predictions_train = initial_model.predict(X_train)
+initial_predictions_test = initial_model.predict(X_test)
+initial_train_metrics = compute_metrics(y_train, initial_predictions_train)
+initial_test_metrics = compute_metrics(y_test, initial_predictions_test)
+
+# Bayesian optimization setup
+search_spaces = {
+    'n_estimators': Integer(10, 600),  # Broadening the search range
+    'learning_rate': Real(0.001, 100, 'log-uniform'),  # Using log-uniform distribution
+    'loss': Categorical(['linear', 'square', 'exponential'])
+}
+
+opt = BayesSearchCV(initial_model, search_spaces, n_iter=100, cv=5, scoring='neg_mean_squared_error', n_jobs=-1, random_state=42)
+opt.fit(X_train, y_train)
+
+# Best model after optimization
+best_model = opt.best_estimator_
+
+# Predictions and metrics for the tuned model
+predictions_train = best_model.predict(X_train)
+predictions_test = best_model.predict(X_test)
+train_metrics = compute_metrics(y_train, predictions_train)
+test_metrics = compute_metrics(y_test, predictions_test)
+    
+# Initial and tuned model metrics comparison
+    metrics_comparison_df = pd.DataFrame({
+        'Metric': ['R2', 'RMSE', 'MAE', 'MAPE', 'MBE'],
+        'Initial Model Training': list(initial_train_metrics.values()),
+        'Tuned Model Training': list(train_metrics.values()),
+        'Initial Model Testing': list(initial_test_metrics.values()),
+        'Tuned Model Testing': list(test_metrics.values()),
+    })
+    metrics_comparison_df.to_excel(writer, sheet_name='Metrics Comparison', index=False)
+
+# Hyperparameters comparison
+    hyperparameters_comparison_df = pd.DataFrame({
+        'Parameter': ['n_estimators', 'learning_rate', 'loss'],
+        'Initial Value': [initial_params['n_estimators'], initial_params['learning_rate'], initial_params['loss']],
+        'Tuned Value': [best_model.get_params()['n_estimators'], best_model.get_params()['learning_rate'], 'linear'],
+    })
+    hyperparameters_comparison_df.to_excel(writer, sheet_name='Hyperparameters Comparison', index=False)
+
+# SHAP values for feature importance
+# Use the predict function of the best model to create the SHAP explainer:
+explainer = shap.Explainer(best_model.predict, X_train)
+
+# Calculate SHAP values (assuming X_train is your training data DataFrame)
+shap_values = explainer(X_train)
+
+# Summary Plot - for each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, feature_names=X_train.columns)
+
+# Bar Plot - showing the average impact of each feature
+plt.figure(figsize=(25, 25))
+shap.summary_plot(shap_values, X_train, plot_type="bar")
+
+# List of input combinations for evaluation
+input_combinations = [
+    ['X1'],
+    ['X1', 'X2'],
+    ['X1', 'X2', 'X3'],
+    ['X1', 'X2', 'X3', 'X4'],
+    ['X1', 'X2', 'X3', 'X4', 'X5'],
+    # Add more combinations as needed
+]
+
+# Dictionary to store evaluation results for each input combination
+directory = "C:/....../....../...../....."
+
+# Corrected section for evaluating performance for each input combination
+evaluation_results = {}  # Dictionary to store evaluation results for each input combination
+
+for input_features in input_combinations:
+    # Subset features
+    X_train_subset = X_train[input_features]
+    X_test_subset = X_test[input_features]
+    
+    # Fit the model on the subset of features
+    best_model.fit(X_train_subset, y_train)
+    
+    # Make predictions on training and testing data
+    predictions_train_subset = best_model.predict(X_train_subset)
+    predictions_test_subset = best_model.predict(X_test_subset)
+    
+    # Recalculate metrics for the subset
+    metrics_train_subset = compute_metrics(y_train, predictions_train_subset)
+    metrics_test_subset = compute_metrics(y_test, predictions_test_subset)
+    
+    # Store results
+    evaluation_results[str(input_features)] = {
+        'Metrics Train': metrics_train_subset,
+        'Metrics Test': metrics_test_subset,
+    }
+              
+    # Create a DataFrame for R2 and RMSE values
+    performance_metrics_df = pd.DataFrame({
+        'Input Combination': list(evaluation_results.keys()),
+        'R2 Train': [evaluation_results[combo]['Metrics Train']['R2'] for combo in evaluation_results],
+        'RMSE Train': [evaluation_results[combo]['Metrics Train']['RMSE'] for combo in evaluation_results],
+        'R2 Test': [evaluation_results[combo]['Metrics Test']['R2'] for combo in evaluation_results],
+        'RMSE Test': [evaluation_results[combo]['Metrics Test']['RMSE'] for combo in evaluation_results],
+    })
